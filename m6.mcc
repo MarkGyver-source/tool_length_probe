@@ -1,0 +1,281 @@
+function m6()
+local inst = mc.mcGetInstance();
+local touchPlateXPosIND = -33.5; --X position (in machine coord) of the touch plate
+local touchPlateYPosIND = -45.947; --Y position (in machine coord) of the touch plate
+local touchPlateXPos = -33.5; --X position (in machine coord) of the touch plate
+local touchPlateYPos = -43.95; --Y position (in machine coord) of the touch plate
+local toolChangeXPos = -222.7; --X position (in machine coord) of the touch plate
+local toolChangeYPos = -595.5; --Y position (in machine coord) of the touch plate
+local SafeZ = -10; --Safe Z position for driving
+local toolChangeZ = -140; --abs Z height to move the head for manual tool change by operator
+local colletToTouchPosIND = -5; --This is the z position where the end of the spinde is about to touch the sensor, leave about 0.1in clearance
+local colletToTouchPos = -80; --This is the z position where the end of the spinde is about to touch the sensor, leave about 0.1in clearance
+local noToolLen = 1.25; --Length to use if tool lenght = 0 (make sure NO tools can be longer than this);
+local probeCode = "G31.1"; --G code of the probe to use
+local tooloffset = 0;--45.468;
+
+--define motors mapping
+local xAxisNb = 0;
+local yAxisNb = 1;
+local zAxisNb = 2;
+
+--Track original X/Y/Z position
+local orgX = mc.mcAxisGetPos(inst,xAxisNb);
+local orgY = mc.mcAxisGetPos(inst,yAxisNb);
+local orgZ = mc.mcAxisGetPos(inst,zAxisNb);
+
+local out5= mc.mcSignalGetHandle(inst, mc.OSIG_OUTPUT45);
+
+
+--wxMessageBox Return Values
+--Yes = 2
+--OK = 4
+--No = 8
+--Cancel = 16
+
+
+local requestedTool = mc.mcToolGetSelected(inst);
+local currenttool = mc.mcToolGetCurrent(inst);
+local currentToolLen = mc.mcToolGetData(inst,mc.MTOOL_MILL_HEIGHT,currenttool);
+
+local messageTool = wx.wxGetTextFromUser("Which tool do you want to change to?", "Value")
+requestedTool = tonumber(messageTool)
+
+mc.mcCntlSetLastError(inst,"M6 – Processing tool change from"..currenttool.." to "..requestedTool);
+--Ensure a tool change is needed
+if requestedTool == currenttool
+then
+--mc.mcCntlSetLastError(inst"M6 – Current tool and Requested tool are the same, nothing to do");
+wx.wxMessageBox("M6 – Current tool and Requested tool are the same, nothing to do");
+return;
+end;
+
+
+local messagePrompt_air = wx.wxMessageBox("Do you want air on?", "Air prompt",2) --Ok, Cancel
+local messageGet_air = tonumber(messagePrompt_air)
+
+if messageGet_air == 16 then
+	mc.mcCntlSetLastError(inst,"Toolchange aborted");
+	mc.mcCntlEStop(inst);
+return;
+end
+
+local messagePrompt_position = wx.wxMessageBox("Do you want toolchange on position?", "Position prompt",2) --Ok, Cancel
+local messageGet_position = tonumber(messagePrompt_position)
+
+local requestedToolget = tonumber(requestedTool)
+local messagePrompt_start = wx.wxMessageBox("Start the toolchange to toolnumber: " ..requestedToolget, "Air prompt",2) --Ok, Cancel
+local messageGet_start = tonumber(messagePrompt_start)
+
+if messageGet_start == 2 then							--switch air on
+else
+	mc.mcCntlSetLastError(inst,"Toolchange aborted");
+	mc.mcCntlEStop(inst);
+end
+
+
+--Ensure valid tool length, if not, use default value
+if (currentToolLen <= 0.1)
+then
+currentToolLen = noToolLen;
+end
+
+--Keep of copy of the current postion mode, units, feed as we are going to change them
+local positionMode = mc.mcCntlGetPoundVar(inst,4003);
+local units = mc.mcCntlGetPoundVar(inst,4006);
+local feedRate = mc.mcCntlGetPoundVar(inst, 2134);
+
+--sure we are fully homed on all axises
+local xHomed = mc.mcAxisIsHomed(inst,xAxisNb);
+local yHomed = mc.mcAxisIsHomed(inst,yAxisNb);
+local zHomed = mc.mcAxisIsHomed(inst,zAxisNb);
+
+if (xHomed == 0 or yHomed == 0 or zHomed == 0)
+then
+mc.mcCntlSetLastError(inst,"M6 – Tool change : At least one axis is not homed");
+mc.mcCntlEStop(inst);
+return;
+end
+
+if (currenttool == 10)
+then
+	wx.wxMessageBox("Induktion probe");
+	local messagePrompt_induktion = wx.wxMessageBox("Do you want induction probe?", "Induction prompt",2) --Ok, Cancel
+local messageGet_induktion = tonumber(messagePrompt_induktion)
+end
+
+if (currenttool == 10 or messagePrompt_induktion == 2 )
+then
+
+
+mc.mcCntlGcodeExecuteWait(inst, "G21 G90 G53 G0 Z-5.0\n");--Move Z to safe pos
+mc.mcCntlGcodeExecuteWait(inst, "G53 G0 X"..touchPlateXPosIND.." Y"..touchPlateYPosIND); --Goto x/y of touch pad
+
+--Move Z close the touch pad
+--TODO : use probing to stop on contact (safety / prevent tool breakage)
+mc.mcCntlGcodeExecuteWait(inst, "G53 G0 Z"..colletToTouchPosIND); -- Move to probing pos
+
+if messageGet_air == 2 then							--switch air on
+	mc.mcSignalSetState(out5, true);
+else
+	mc.mcSignalSetState(out5, false);
+end
+
+mc.mcCntlGcodeExecuteWait(inst,"G91 "..probeCode.." Z-157 F250"); --Fast Probe first
+mc.mcCntlGcodeExecuteWait(inst,"G91 G01 Z1.0 F100"); --Probe to a max of 2 inches
+
+--Probe current tool Z pos
+mc.mcCntlGcodeExecuteWait(inst,"G91 "..probeCode.." Z-3.5 F10"); --Probe to a max of 2 inches
+end
+
+
+if (currenttool ~= 10 or  messageGet_induktion == 8)
+then
+	--wx.wxMessageBox("optical probe");
+mc.mcCntlGcodeExecuteWait(inst, "G21 G90 G53 G0 Z-5.0\n");--Move Z to safe pos
+mc.mcCntlGcodeExecuteWait(inst, "G53 G0 X"..touchPlateXPos.." Y"..touchPlateYPos); --Goto x/y of touch pad
+
+--Move Z close the touch pad
+--TODO : use probing to stop on contact (safety / prevent tool breakage)
+mc.mcCntlGcodeExecuteWait(inst, "G53 G0 Z"..colletToTouchPos); -- Move to probing pos
+
+if messageGet_air == 2 then							--switch air on
+	mc.mcSignalSetState(out5, true);
+else
+	mc.mcSignalSetState(out5, false);
+end
+
+mc.mcCntlGcodeExecuteWait(inst,"G91 "..probeCode.." Z-130.0 F500"); --Fast Probe first
+mc.mcCntlGcodeExecuteWait(inst,"G91 G01 Z1.0 F100"); --Probe to a max of 2 inches
+
+--Probe current tool Z pos
+mc.mcCntlGcodeExecuteWait(inst,"G91 "..probeCode.." Z-3.5 F10"); --Probe to a max of 2 inches
+end
+
+
+
+mc.mcSignalSetState(out5, false);
+
+
+local didStrike = mc.mcCntlProbeGetStrikeStatus(inst);
+--TODO : Ensure probe did touch
+
+local currentToolZ = mc.mcAxisGetPos(inst,2);
+local newToolDesc = mc.mcToolGetDesc(inst,requestedTool);
+
+if (currenttool == 10 or messagePrompt_induktion == 2 )
+then
+	currentToolZ = currentToolZ - tooloffset
+	end
+
+mc.mcCntlGcodeExecuteWait(inst, "G90 G53 G0 Z"..SafeZ);--Move Z back to safe pos for tool change
+
+if messageGet_position == 2 then
+
+else
+	mc.mcCntlGcodeExecuteWait(inst, "G53 G0 X"..toolChangeXPos.." Y"..toolChangeYPos); --Goto x/y of touch pad
+	if (currenttool ~= 10 and requestedTool ~= 10)
+	then
+	mc.mcCntlGcodeExecuteWait(inst, "G90 G53 G0 Z"..toolChangeZ);--Move Z to pos for tool change
+	end
+end
+
+wx.wxMessageBox("Please change to tool number "..requestedTool.."  and press ENTER to continue");
+--wx.wxMessageBox("Please change to tool number "..requestedTool.." ("..newToolDesc..") and press ENTER to continue");
+
+--At this point, the tool has been changed, recalc new values
+currenttool = requestedTool;
+currentToolLen = mc.mcToolGetData(inst,mc.MTOOL_MILL_HEIGHT,currenttool);
+
+if (currentToolLen <= 0.1)
+then
+currentToolLen = noToolLen;
+end
+
+--Calculate new tool probe Z
+probeStart = colletToTouchPos + currentToolLen;
+probeStartIND = colletToTouchPosIND + currentToolLen;
+
+--Move Z close the touch pad
+--TODO : use probing to stop on contact (safety / prevent tool breakage)
+if (currenttool == 10)
+then
+	wx.wxMessageBox("Induktion probe");
+	local messagePrompt_induktion2 = wx.wxMessageBox("Do you want induction probe?", "Induction prompt",2) --Ok, Cancel
+local messageGet_induktion2 = tonumber(messagePrompt_induktion2)
+end
+
+if (requestedTool == 10 or messageGet_induktion2 == 2)
+then
+	wx.wxMessageBox("Induktion probe");
+mc.mcCntlGcodeExecuteWait(inst, "G90 G53 G0 Z"..SafeZ);--Move Z back to safe pos for tool change
+mc.mcCntlGcodeExecuteWait(inst, "G53 G0 X"..touchPlateXPosIND.." Y"..touchPlateYPosIND); --Goto x/y of touch pad
+--mc.mcCntlGcodeExecuteWait(inst, "G90 G53 G0 Z"..probeStartIND); -- Move to probing pos
+mc.mcCntlGcodeExecuteWait(inst, "G53 G0 Z"..colletToTouchPosIND); -- Move to probing pos
+
+if messageGet_air == 2 then							--switch air on
+	mc.mcSignalSetState(out5, true);
+else
+	mc.mcSignalSetState(out5, false);
+end
+
+
+mc.mcCntlGcodeExecuteWait(inst,"G91 "..probeCode.." Z-157 F250"); --Fast Probe first
+mc.mcCntlGcodeExecuteWait(inst,"G91 G01 Z1.0 F100"); --Probe to a max of 2 inches
+
+--Probe current tool Z pos
+mc.mcCntlGcodeExecuteWait(inst,"G91 "..probeCode.." Z-2.5 F10"); --Probe to a max of 2 inches
+
+end
+
+if (requestedTool ~= 10 or  messageGet_induktion2 == 8)
+then
+	--wx.wxMessageBox("optical probe");
+mc.mcCntlGcodeExecuteWait(inst, "G90 G53 G0 Z"..SafeZ);--Move Z back to safe pos for tool change
+
+mc.mcCntlGcodeExecuteWait(inst, "G53 G0 X"..touchPlateXPos.." Y"..touchPlateYPos); --Goto x/y of touch pad
+mc.mcCntlGcodeExecuteWait(inst, "G90 G53 G0 Z"..colletToTouchPos); -- Move to probing pos
+
+if messageGet_air == 2 then							--switch air on
+	mc.mcSignalSetState(out5, true);
+else
+	mc.mcSignalSetState(out5, false);
+end
+
+mc.mcCntlGcodeExecuteWait(inst,"G91 "..probeCode.." Z-130.0 F500"); --Fast Probe first
+mc.mcCntlGcodeExecuteWait(inst,"G91 G01 Z1.0 F100"); --Probe to a max of 2 inches
+
+--Probe current tool Z pos
+mc.mcCntlGcodeExecuteWait(inst,"G91 "..probeCode.." Z-2.5 F10"); --Probe to a max of 2 inches
+
+end
+
+if (requestedTool == 10 or messageGet_induktion2 == 2)
+then
+	currentToolZ = currentToolZ + tooloffset
+	end
+
+mc.mcSignalSetState(out5, false);
+mc.mcAxisSetPos(inst,2,currentToolZ); --Set Z to old tool probed Z
+
+local rc = mc.mcToolSetCurrent(inst,requestedTool); -- Change tool
+local newlyToolIdx = mc.mcToolGetCurrent(inst);
+
+mc.mcCntlGcodeExecuteWait(inst,"G90 G53 G0 Z-5.0"); -- Move Z back to abs 0
+mc.mcCntlGcodeExecuteWait(inst,"G90 G0 X"..orgX.." Y"..orgY); -- Move X/Y back to org
+mc.mcCntlGcodeExecuteWait(inst,"G90 G0 Z"..orgZ); -- Move Z to org pos
+
+--Restore Position mode, units & feed
+mc.mcCntlSetPoundVar(inst,4003,positionMode);
+mc.mcCntlSetPoundVar(inst,4006,units);
+mc.mcCntlSetPoundVar(inst,2134,feedRate);
+
+-- Execute some G code to force modal label UI to refresh
+-- else, ui and interal settings are out of sync which can cause operator errors
+mc.mcCntlGcodeExecuteWait(inst,"G"..units);
+
+end
+
+if (mc.mcInEditor() == 1) then
+m6()
+end
